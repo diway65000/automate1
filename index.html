@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Keon Controller — PWA</title>
+
+<!-- Librairie Buttplug.io pour le contrôle Bluetooth du Kiiroo Keon -->
+<script src="https://cdn.jsdelivr.net/npm/buttplug@3.2.0/dist/web/buttplug.min.js"></script>
+
+<style>
+  :root{
+    --bg-1:#0a0a14;
+    --bg-2:#141428;
+    --accent:#ff2d78;
+    --accent-2:#7c3aed;
+    --accent-glow: rgba(255,45,120,0.55);
+    --ok:#22c55e;
+    --warn:#f59e0b;
+    --danger:#ef4444;
+    --text:#e9e9f5;
+    --text-dim:#8c8ca8;
+    --panel: rgba(255,255,255,0.04);
+    --panel-border: rgba(255,255,255,0.09);
+  }
+
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body{
+    margin:0; padding:0;
+    width:100%; height:100%;
+    overflow:hidden;           /* empêche tout scroll */
+    touch-action:none;         /* empêche le zoom/scroll tactile natif */
+    overscroll-behavior:none;
+    background: radial-gradient(1200px 800px at 50% -10%, var(--bg-2), var(--bg-1) 60%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Arial, sans-serif;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+
+  #app{
+    display:flex;
+    flex-direction:column;
+    height:100%;
+    width:100%;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* ---------- HEADER ---------- */
+  header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:14px 16px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent);
+    border-bottom:1px solid var(--panel-border);
+    flex-shrink:0;
+  }
+
+  .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .brand .logo-dot{
+    width:12px;height:12px;border-radius:50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 0 14px var(--accent-glow);
+  }
+  .brand h1{
+    font-size:15px;
+    font-weight:700;
+    letter-spacing:0.5px;
+    margin:0;
+    color: var(--text);
+  }
+  .brand span{
+    display:block;
+    font-size:10px;
+    color: var(--text-dim);
+    font-weight:500;
+    letter-spacing:1px;
+    text-transform:uppercase;
+  }
+
+  .status-wrap{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:12px;
+    color: var(--text-dim);
+  }
+  .status-dot{
+    width:9px;height:9px;border-radius:50%;
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+    transition: all .3s ease;
+  }
+  .status-dot.connected{
+    background: var(--ok);
+    box-shadow: 0 0 10px var(--ok);
+  }
+  .status-dot.scanning{
+    background: var(--warn);
+    box-shadow: 0 0 10px var(--warn);
+    animation: pulse 1s infinite;
+  }
+
+  #connectBtn{
+    border:none;
+    padding:10px 16px;
+    border-radius:12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color:white;
+    font-weight:700;
+    font-size:13px;
+    letter-spacing:0.3px;
+    cursor:pointer;
+    box-shadow: 0 4px 16px rgba(124,58,237,0.35);
+    transition: transform .15s ease, box-shadow .15s ease, opacity .2s ease;
+    white-space:nowrap;
+  }
+  #connectBtn:active{ transform: scale(0.96); }
+  #connectBtn.connected{
+    background: linear-gradient(135deg, #1b2a22, #10231a);
+    box-shadow: none;
+    color: var(--ok);
+    border: 1px solid rgba(34,197,94,0.4);
+  }
+  #connectBtn:disabled{ opacity:.6; cursor:not-allowed; }
+
+  /* ---------- PAD TACTILE ---------- */
+  main{
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:16px;
+    min-height:0;
+  }
+
+  #padWrapper{
+    position:relative;
+    width:100%;
+    max-width:560px;
+    height:100%;
+    max-height:620px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  #axisLabelY{
+    position:absolute;
+    left:-6px;
+    top:50%;
+    transform: translateY(-50%) rotate(-90deg);
+    font-size:10px;
+    letter-spacing:2px;
+    color:var(--text-dim);
+    text-transform:uppercase;
+    font-weight:700;
+  }
+  #axisLabelX{
+    position:absolute;
+    bottom:-20px;
+    left:50%;
+    transform:translateX(-50%);
+    font-size:10px;
+    letter-spacing:2px;
+    color:var(--text-dim);
+    text-transform:uppercase;
+    font-weight:700;
+  }
+
+  #pad{
+    position:relative;
+    width:100%;
+    height:100%;
+    border-radius:24px;
+    background:
+      linear-gradient(0deg, rgba(255,45,120,0.06), rgba(124,58,237,0.06)),
+      var(--panel);
+    border:1px solid var(--panel-border);
+    box-shadow: inset 0 0 60px rgba(0,0,0,0.5), 0 10px 40px rgba(0,0,0,0.4);
+    overflow:hidden;
+    touch-action:none;
+  }
+
+  #pad::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image:
+      linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px),
+      linear-gradient(to top, rgba(255,255,255,0.05) 1px, transparent 1px);
+    background-size: 12.5% 12.5%;
+    pointer-events:none;
+  }
+
+  #centerCross{
+    position:absolute;
+    left:50%; top:50%;
+    width:1px; height:100%;
+    background: rgba(255,255,255,0.06);
+    transform: translateX(-50%);
+    pointer-events:none;
+  }
+
+  #cursor{
+    position:absolute;
+    width:46px;height:46px;
+    left:50%; top:50%;
+    transform: translate(-50%,-50%);
+    border-radius:50%;
+    background: radial-gradient(circle at 35% 35%, #fff, var(--accent) 45%, var(--accent-2) 100%);
+    box-shadow: 0 0 25px var(--accent-glow), 0 0 50px rgba(124,58,237,0.4);
+    pointer-events:none;
+    transition: width .15s ease, height .15s ease, opacity .2s ease;
+  }
+  #cursor.idle{ width:30px; height:30px; opacity:.5; }
+
+  /* ---------- DEBUG LINE ---------- */
+  #debugLine{
+    flex-shrink:0;
+    text-align:center;
+    font-family: "SF Mono", "Courier New", monospace;
+    font-size:11px;
+    letter-spacing:1px;
+    color: var(--text-dim);
+    padding:6px 0 2px;
+  }
+  #debugLine b{ color: var(--text); }
+
+  /* ---------- CONTROL BAR ---------- */
+  footer{
+    flex-shrink:0;
+    display:flex;
+    gap:12px;
+    padding:12px 16px calc(14px + env(safe-area-inset-bottom));
+    background: linear-gradient(0deg, rgba(255,255,255,0.03), transparent);
+    border-top:1px solid var(--panel-border);
+  }
+
+  .ctrl-btn{
+    flex:1;
+    border:1px solid var(--panel-border);
+    background: var(--panel);
+    color: var(--text);
+    padding:14px 0;
+    border-radius:14px;
+    font-weight:800;
+    font-size:13px;
+    letter-spacing:1.5px;
+    cursor:pointer;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:4px;
+    transition: all .15s ease;
+  }
+  .ctrl-btn .ico{ font-size:18px; }
+  .ctrl-btn:active{ transform: scale(0.95); }
+
+  #recBtn.active{
+    background: linear-gradient(135deg, #3a0f17, #200509);
+    border-color: var(--danger);
+    color:#ff6b6b;
+    animation: pulse 1s infinite;
+  }
+  #playBtn.active{
+    background: linear-gradient(135deg, #0f3a20, #052009);
+    border-color: var(--ok);
+    color:#6bff9d;
+  }
+  #stopBtn{
+    background: linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.04));
+  }
+
+  @keyframes pulse{
+    0%,100%{ opacity:1; }
+    50%{ opacity:.55; }
+  }
+
+  /* petit toast d'erreur */
+  #toast{
+    position:fixed;
+    left:50%; bottom:110px;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(30,10,15,0.95);
+    border:1px solid rgba(239,68,68,0.5);
+    color:#ffb4b4;
+    padding:10px 16px;
+    border-radius:12px;
+    font-size:12px;
+    max-width:85%;
+    text-align:center;
+    opacity:0;
+    pointer-events:none;
+    transition: all .3s ease;
+    z-index:50;
+  }
+  #toast.show{
+    opacity:1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  @media (max-width:420px){
+    .brand h1{ font-size:13px; }
+    #connectBtn{ padding:9px 12px; font-size:12px; }
+    .ctrl-btn{ font-size:11px; padding:12px 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===================== HEADER ===================== -->
+  <header>
+    <div class="brand">
+      <div class="logo-dot"></div>
+      <div>
+        <h1>KEON CONTROLLER</h1>
+        <span id="statusText">Déconnecté</span>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:14px;">
+      <div class="status-wrap">
+        <div class="status-dot" id="statusDot"></div>
+      </div>
+      <button id="connectBtn">Connecter l'appareil</button>
+    </div>
+  </header>
+
+  <!-- ===================== PAD TACTILE ===================== -->
+  <main>
+    <div id="padWrapper">
+      <span id="axisLabelY">Amplitude</span>
+      <div id="pad">
+        <div id="centerCross"></div>
+        <div id="cursor" class="idle"></div>
+      </div>
+      <span id="axisLabelX">Vitesse</span>
+    </div>
+  </main>
+
+  <!-- ===================== DEBUG ===================== -->
+  <div id="debugLine">
+    VITESSE: <b id="dbgSpeed">0%</b> &nbsp;|&nbsp; AMPLITUDE: <b id="dbgAmp">0%</b> &nbsp;|&nbsp; <span id="dbgMode">IDLE</span>
+  </div>
+
+  <!-- ===================== CONTROL BAR ===================== -->
+  <footer>
+    <button class="ctrl-btn" id="recBtn"><span class="ico">⏺</span>REC</button>
+    <button class="ctrl-btn" id="playBtn"><span class="ico">▶</span>PLAY</button>
+    <button class="ctrl-btn" id="stopBtn"><span class="ico">⏹</span>STOP</button>
+  </footer>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ============================================================
+     RÉFÉRENCES DOM
+  ============================================================ */
+  const connectBtn = document.getElementById('connectBtn');
+  const statusDot  = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const pad        = document.getElementById('pad');
+  const cursor     = document.getElementById('cursor');
+  const dbgSpeed   = document.getElementById('dbgSpeed');
+  const dbgAmp     = document.getElementById('dbgAmp');
+  const dbgMode    = document.getElementById('dbgMode');
+  const recBtn     = document.getElementById('recBtn');
+  const playBtn    = document.getElementById('playBtn');
+  const stopBtn    = document.getElementById('stopBtn');
+  const toast      = document.getElementById('toast');
+
+  /* ============================================================
+     ÉTAT GLOBAL DE L'APPLICATION
+  ============================================================ */
+  let client = null;          // Instance ButtplugClient
+  let device = null;          // Appareil Kiiroo Keon connecté
+  let isConnected = false;
+
+  let currentX = 0;           // Vitesse (0.0 -> 1.0), axe horizontal du pad
+  let currentY = 0;           // Amplitude (0.0 -> 1.0), axe vertical du pad
+  let isPressed = false;      // Le doigt est-il actuellement sur le pad ?
+
+  let isOscillating = false;  // Boucle du "moteur virtuel" active
+  let oscillatorToken = 0;    // Permet d'invalider une boucle précédente proprement
+
+  let isRecording = false;
+  let isPlaying   = false;
+  let recordedPattern = [];   // [{t, x, y}, ...]
+  let recordStartTime = 0;
+  let playbackTimeouts = [];
+
+  /* ============================================================
+     UTILITAIRES
+  ============================================================ */
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+  // Affiche un petit message d'erreur temporaire à l'utilisateur
+  function showToast(message, duration = 3000) {
+    toast.textContent = message;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('show'), duration);
+  }
+
+  function handleError(err) {
+    console.error('[Keon Controller] Erreur :', err);
+    showToast(typeof err === 'string' ? err : (err && err.message) ? err.message : "Erreur Bluetooth inconnue");
+  }
+
+  /* ============================================================
+     MISE À JOUR DE L'INTERFACE
+  ============================================================ */
+  function updateDebug() {
+    dbgSpeed.textContent = Math.round(currentX * 100) + '%';
+    dbgAmp.textContent   = Math.round(currentY * 100) + '%';
+    dbgMode.textContent  = isRecording ? 'REC' : (isPlaying ? 'PLAY' : (isPressed ? 'LIVE' : 'IDLE'));
+  }
+
+  // Positionne visuellement le curseur en fonction des valeurs x / y (0..1)
+  function updateCursorVisual(x, y) {
+    cursor.classList.remove('idle');
+    cursor.style.left = (x * 100) + '%';
+    cursor.style.top  = ((1 - y) * 100) + '%';
+  }
+
+  // Remet le curseur visuel au centre (position de repos)
+  function resetCursorVisual() {
+    cursor.classList.add('idle');
+    cursor.style.left = '50%';
+    cursor.style.top  = '50%';
+  }
+
+  function setStatus(state, label) {
+    statusDot.className = 'status-dot ' + (state || '');
+    statusText.textContent = label;
+  }
+
+  /* ============================================================
+     CONNEXION BLUETOOTH (BUTTPLUG.IO)
+  ============================================================ */
+  async function connectDevice() {
+    if (isConnected) {
+      // Si déjà connecté, le bouton permet de se déconnecter proprement
+      await disconnectDevice();
+      return;
+    }
+
+    if (!navigator.bluetooth) {
+      showToast("Le Bluetooth Web n'est pas supporté par ce navigateur. Utilisez Chrome/Edge sur Android ou Desktop.");
+      return;
+    }
+
+    try {
+      connectBtn.disabled = true;
+      setStatus('scanning', 'Connexion en cours…');
+
+      // Création du client Buttplug si nécessaire
+      if (!client) {
+        client = new Buttplug.ButtplugClient("Keon Controller PWA");
+
+        client.on('deviceadded', onDeviceAdded);
+        client.on('deviceremoved', onDeviceRemoved);
+        client.on('disconnect', onClientDisconnect);
+      }
+
+      const connector = new Buttplug.ButtplugBrowserWebBluetoothClientConnector();
+      await client.connect(connector);
+
+      setStatus('scanning', 'Recherche de l\'appareil…');
+      await client.startScanning();
+
+      // On laisse un peu de temps au scan pour détecter le Keon via Bluetooth
+      // (l'événement 'deviceadded' se chargera d'assigner "device" dès détection)
+      await sleep(4000);
+      await client.stopScanning().catch(() => {});
+
+      if (!device && client.devices.length > 0) {
+        // Sécurité : si l'événement n'a pas déclenché à temps
+        device = client.devices[0];
+        onDeviceReady();
+      } else if (!device) {
+        throw new Error("Aucun appareil détecté. Vérifiez que le Keon est allumé et en mode appairage.");
+      }
+
+    } catch (err) {
+      handleError(err);
+      setStatus('', 'Déconnecté');
+      connectBtn.classList.remove('connected');
+      connectBtn.textContent = "Connecter l'appareil";
+      isConnected = false;
+    } finally {
+      connectBtn.disabled = false;
+    }
+  }
+
+  function onDeviceAdded(newDevice) {
+    if (!device) {
+      device = newDevice;
+      onDeviceReady();
+    }
+  }
+
+  function onDeviceReady() {
+    isConnected = true;
+    setStatus('connected', 'Connecté : ' + (device.name || 'Kiiroo Keon'));
+    connectBtn.classList.add('connected');
+    connectBtn.textContent = 'Déconnecter';
+    startOscillator();
+  }
+
+  function onDeviceRemoved(removedDevice) {
+    if (device && removedDevice && device.index === removedDevice.index) {
+      device = null;
+      isConnected = false;
+      stopOscillator();
+      setStatus('', 'Appareil déconnecté');
+      connectBtn.classList.remove('connected');
+      connectBtn.textContent = "Connecter l'appareil";
+      showToast("L'appareil a été déconnecté.");
+    }
+  }
+
+  function onClientDisconnect() {
+    device = null;
+    isConnected = false;
+    stopOscillator();
+    setStatus('', 'Déconnecté');
+    connectBtn.classList.remove('connected');
+    connectBtn.textContent = "Connecter l'appareil";
+  }
+
+  async function disconnectDevice() {
+    try {
+      stopOscillator();
+      stopPlayback();
+      if (client && client.connected) {
+        await client.disconnect();
+      }
+    } catch (err) {
+      handleError(err);
+    } finally {
+      client = null;
+      device = null;
+      isConnected = false;
+      setStatus('', 'Déconnecté');
+      connectBtn.classList.remove('connected');
+      connectBtn.textContent = "Connecter l'appareil";
+    }
+  }
+
+  /* ============================================================
+     OSCILLATEUR VIRTUEL — Pilotage du moteur linéaire du Keon
+     Le Keon ne possède pas de moteur vibrant mais un rail linéaire.
+     On simule donc un va-et-vient continu entre 0 (position rentrée)
+     et l'amplitude voulue (currentY), à une cadence définie par
+     la vitesse voulue (currentX).
+  ============================================================ */
+  async function startOscillator() {
+    if (isOscillating) return;
+    isOscillating = true;
+    const myToken = ++oscillatorToken;
+    let atZero = true; // true = le piston est actuellement en position 0
+
+    while (isOscillating && myToken === oscillatorToken) {
+      const speed = currentX;
+      const amplitude = currentY;
+
+      // Seuil mort : en dessous de 5%, on reste immobile pour ne pas
+      // saturer la liaison Bluetooth avec des commandes inutiles.
+      if (speed < 0.05 && amplitude < 0.05) {
+        if (device && !atZero) {
+          try { await device.linear(0, 200); } catch (err) { handleError(err); stopOscillator(); break; }
+          atZero = true;
+        }
+        await sleep(150);
+        continue;
+      }
+
+      // Durée du mouvement en fonction de la vitesse : rapide (150ms)
+      // quand speed = 1, lent (1500ms) quand speed = 0.
+      const duration = Math.round(1500 - speed * (1500 - 150));
+      const targetPosition = atZero ? amplitude : 0;
+
+      if (device) {
+        try {
+          await device.linear(targetPosition, duration);
+        } catch (err) {
+          handleError(err);
+          break;
+        }
+      }
+
+      atZero = !atZero;
+
+      // On attend la fin réelle du mouvement avant d'envoyer l'inverse
+      await sleep(duration);
+    }
+  }
+
+  function stopOscillator() {
+    isOscillating = false;
+    oscillatorToken++; // invalide toute boucle en cours
+    if (device) {
+      device.linear(0, 150).catch(() => {});
+    }
+  }
+
+  /* ============================================================
+     GESTION DU PAD TACTILE (POINTER EVENTS)
+  ============================================================ */
+  function getPadValues(clientX, clientY) {
+    const rect = pad.getBoundingClientRect();
+    const x = clamp01((clientX - rect.left) / rect.width);
+    const y = clamp01(1 - (clientY - rect.top) / rect.height);
+    return { x, y };
+  }
+
+  function recordPoint(x, y) {
+    if (!isRecording) return;
+    recordedPattern.push({
+      t: performance.now() - recordStartTime,
+      x, y
+    });
+  }
+
+  pad.addEventListener('pointerdown', (e) => {
+    if (isPlaying) return; // on ne touche pas au pad pendant une lecture
+    pad.setPointerCapture(e.pointerId);
+    isPressed = true;
+    const { x, y } = getPadValues(e.clientX, e.clientY);
+    currentX = x; currentY = y;
+    updateCursorVisual(x, y);
+    recordPoint(x, y);
+    updateDebug();
+  });
+
+  pad.addEventListener('pointermove', (e) => {
+    if (!isPressed || isPlaying) return;
+    const { x, y } = getPadValues(e.clientX, e.clientY);
+    currentX = x; currentY = y;
+    updateCursorVisual(x, y);
+    recordPoint(x, y);
+    updateDebug();
+  });
+
+  function releasePad() {
+    if (!isPressed) return;
+    isPressed = false;
+    // Fonction "homme mort" : retour instantané à zéro
+    currentX = 0;
+    currentY = 0;
+    resetCursorVisual();
+    recordPoint(0, 0);
+    updateDebug();
+  }
+
+  pad.addEventListener('pointerup', releasePad);
+  pad.addEventListener('pointercancel', releasePad);
+  pad.addEventListener('lostpointercapture', releasePad);
+
+  /* ============================================================
+     ENREGISTREMENT (REC)
+  ============================================================ */
+  recBtn.addEventListener('click', () => {
+    if (isPlaying) {
+      showToast("Impossible d'enregistrer pendant la lecture.");
+      return;
+    }
+
+    isRecording = !isRecording;
+
+    if (isRecording) {
+      recordedPattern = [];
+      recordStartTime = performance.now();
+      recordedPattern.push({ t: 0, x: currentX, y: currentY });
+      recBtn.classList.add('active');
+      showToast("Enregistrement démarré…");
+    } else {
+      recBtn.classList.remove('active');
+      showToast("Enregistrement terminé (" + recordedPattern.length + " points).");
+    }
+    updateDebug();
+  });
+
+  /* ============================================================
+     LECTURE (PLAY)
+  ============================================================ */
+  playBtn.addEventListener('click', () => {
+    if (isRecording) {
+      showToast("Arrêtez l'enregistrement avant de lire.");
+      return;
+    }
+    if (isPlaying) return;
+    if (recordedPattern.length === 0) {
+      showToast("Aucun enregistrement disponible.");
+      return;
+    }
+    startPlayback();
+  });
+
+  function startPlayback() {
+    isPlaying = true;
+    playBtn.classList.add('active');
+    updateDebug();
+
+    playbackTimeouts = recordedPattern.map((point) => {
+      return setTimeout(() => {
+        currentX = point.x;
+        currentY = point.y;
+        updateCursorVisual(point.x, point.y);
+        updateDebug();
+      }, point.t);
+    });
+
+    const lastT = recordedPattern[recordedPattern.length - 1].t;
+    const endTimeout = setTimeout(() => {
+      stopPlayback();
+    }, lastT + 200);
+
+    playbackTimeouts.push(endTimeout);
+  }
+
+  function stopPlayback() {
+    playbackTimeouts.forEach(id => clearTimeout(id));
+    playbackTimeouts = [];
+    if (isPlaying) {
+      isPlaying = false;
+      playBtn.classList.remove('active');
+    }
+  }
+
+  /* ============================================================
+     ARRÊT GLOBAL (STOP)
+  ============================================================ */
+  stopBtn.addEventListener('click', () => {
+    // Arrête l'enregistrement en cours s'il y en a un
+    if (isRecording) {
+      isRecording = false;
+      recBtn.classList.remove('active');
+    }
+    // Arrête toute lecture en cours
+    stopPlayback();
+
+    // Remise à zéro immédiate des valeurs et de l'appareil
+    currentX = 0;
+    currentY = 0;
+    isPressed = false;
+    resetCursorVisual();
+    updateDebug();
+
+    if (device) {
+      device.linear(0, 100).catch((err) => handleError(err));
+    }
+    showToast("Arrêt complet.");
+  });
+
+  /* ============================================================
+     BOUTON DE CONNEXION
+  ============================================================ */
+  connectBtn.addEventListener('click', connectDevice);
+
+  /* ============================================================
+     SÉCURITÉ : empêche tout scroll / zoom résiduel sur iOS/Android
+  ============================================================ */
+  document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+  // Déconnexion propre si l'utilisateur ferme/rafraîchit la page
+  window.addEventListener('beforeunload', () => {
+    if (device) {
+      try { device.linear(0, 50); } catch (e) {}
+    }
+  });
+
+  // Initialisation de l'affichage
+  updateDebug();
+  resetCursorVisual();
+  setStatus('', 'Déconnecté');
+
+})();
+</script>
+</body>
+</html>
