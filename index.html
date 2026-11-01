@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Keon Control Pad</title>
+    <style>
+        :root {
+            --bg-color: #121212;
+            --pad-bg: #222222;
+            --accent: #ff4757;
+            --text: #ffffff;
+        }
+        body {
+            margin: 0; padding: 0; background: var(--bg-color); color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex; flex-direction: column; align-items: center;
+            height: 100vh; touch-action: none; overflow: hidden;
+        }
+        header { padding: 15px; text-align: center; }
+        #status { color: #2ed573; font-size: 0.9em; margin-top: 5px; }
+        
+        #pad-container {
+            width: 85vw; max-width: 360px; height: 45vh;
+            background: var(--pad-bg); border-radius: 20px;
+            position: relative; margin: 15px 0;
+            border: 2px solid #333; overflow: hidden;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.5);
+        }
+        #cursor {
+            width: 44px; height: 44px; background: var(--accent);
+            border-radius: 50%; position: absolute;
+            left: 50%; top: 50%; transform: translate(-50%, -50%);
+            pointer-events: none; opacity: 0.6; transition: opacity 0.2s;
+        }
+        #pad-container.active #cursor { opacity: 1; box-shadow: 0 0 20px var(--accent); }
+        
+        .controls { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; width: 90vw; }
+        button {
+            background: #2d3436; color: white; border: none;
+            padding: 14px 20px; border-radius: 10px; font-size: 0.95rem;
+            cursor: pointer; text-transform: uppercase; font-weight: bold;
+        }
+        button:active { filter: brightness(1.2); }
+        #btn-connect { background: #0984e3; width: 85vw; max-width: 360px; margin-bottom: 10px; }
+        #btn-record.recording { background: #d63031; animation: pulse 1s infinite; }
+        #btn-play.playing { background: #00b894; }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+            100% { transform: scale(1); }
+        }
+        
+        #debug { margin-top: 15px; font-family: monospace; color: #888; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h2>Keon Control Pad</h2>
+        <div id="status">Déconnecté</div>
+    </header>
+
+    <button id="btn-connect">1. CONNECTER L'APPAREIL BLUETOOTH</button>
+
+    <div id="pad-container">
+        <div id="cursor"></div>
+    </div>
+
+    <div class="controls">
+        <button id="btn-record">ENREGISTRER (REC)</button>
+        <button id="btn-play" disabled>LECTURE (PLAY)</button>
+        <button id="btn-stop">STOP</button>
+    </div>
+
+    <div id="debug">Vitesse: 0% | Hauteur: 0%</div>
+
+    <script>
+        // --- 1. WEB BLUETOOTH NATIF (PROTOCOLE KIIROO) ---
+        let txCharacteristic = null;
+        let rxCharacteristic = null;
+        let isConnected = false;
+
+        // Services BLE standards utilisés par les différentes générations Kiiroo / Keon
+        const KIIROO_SERVICES = [
+            'c0de0001-feed-f00d-c0de-000000000000',
+            '0000ffe0-0000-1000-8000-00805f9b34fb',
+            '88f80580-0000-01e6-aace-0002a5d5c51b'
+        ];
+
+        const btnConnect = document.getElementById('btn-connect');
+        const statusEl = document.getElementById('status');
+
+        btnConnect.addEventListener('click', async () => {
+            if (!navigator.bluetooth) {
+                statusEl.innerText = "Erreur: Web Bluetooth non supporté sur ce navigateur";
+                statusEl.style.color = "#ff4757";
+                return;
+            }
+
+            try {
+                statusEl.innerText = "Recherche Bluetooth...";
+                statusEl.style.color = "#ffa502";
+
+                // Scan tous les appareils Bluetooth avec filtres de services
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [
+                        { namePrefix: 'Keon' },
+                        { namePrefix: 'Kiiroo' },
+                        { namePrefix: 'Fleshlight' }
+                    ],
+                    optionalServices: KIIROO_SERVICES
+                });
+
+                statusEl.innerText = `Connexion à ${device.name}...`;
+                const server = await device.gatt.connect();
+
+                // Recherche du service valide
+                let activeService = null;
+                for (const sUuid of KIIROO_SERVICES) {
+                    try {
+                        activeService = await server.getPrimaryService(sUuid);
+                        if (activeService) break;
+                    } catch (e) {}
+                }
+
+                if (!activeService) {
+                    throw new Error("Service Kiiroo introuvable sur cet appareil.");
+                }
+
+                // Récupération de toutes les caractéristiques pour trouver le port d'écriture
+                const characteristics = await activeService.getCharacteristics();
+                for (const char of characteristics) {
+                    if (char.properties.write || char.properties.writeWithoutResponse) {
+                        txCharacteristic = char;
+                        break;
+                    }
+                }
+
+                if (!txCharacteristic) {
+                    throw new Error("Canal d'écriture introuvable.");
+                }
+
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+                isConnected = true;
+                statusEl.innerText = `Connecté : ${device.name}`;
+                statusEl.style.color = "#2ed573";
+                btnConnect.style.display = 'none';
+
+                // Lancement de l'oscillateur moteur
+                startOscillationLoop();
+
+            } catch (err) {
+                console.error(err);
+                statusEl.innerText = "Erreur : " + err.message;
+                statusEl.style.color = "#ff4757";
+            }
+        });
+
+        function onDisconnected() {
+            isConnected = false;
+            txCharacteristic = null;
+            statusEl.innerText = "Appareil déconnecté";
+            statusEl.style.color = "#ff4757";
+            btnConnect.style.display = 'block';
+            setValues(0, 0);
+        }
+
+        // Envoi d'une commande texte brute en BLE
+        async function sendKeonCommand(cmdString) {
+            if (!txCharacteristic) return;
+            try {
+                const encoder = new TextEncoder();
+                await txCharacteristic.writeValue(encoder.encode(cmdString));
+            } catch (err) {
+                console.warn("Échec envoi BLE:", err);
+            }
+        }
+
+        // --- 2. LOGIQUE MOTEUR ---
+        let currentSpeed = 0; // 0 à 1
+        let currentDepth = 0; // 0 à 1
+        let isLoopRunning = false;
+
+        async function startOscillationLoop() {
+            if (isLoopRunning) return;
+            isLoopRunning = true;
+            let targetPos = 0;
+
+            while (isConnected) {
+                if (currentSpeed > 0.05 && currentDepth > 0.05) {
+                    // Durée de la course : de 1500ms (lent) à 150ms (rapide)
+                    const durationMs = Math.floor(1500 - (currentSpeed * 1350));
+                    
+                    // Alterner entre 0 et l'amplitude maximale choisie (0 à 100)
+                    targetPos = targetPos === 0 ? Math.round(currentDepth * 100) : 0;
+
+                    // Syntaxe Kiiroo standard : position (0-100) et temps (ms)
+                    await sendKeonCommand(`${targetPos},${durationMs};\n`);
+                    await sleep(durationMs);
+                } else {
+                    await sleep(100);
+                }
+            }
+            isLoopRunning = false;
+        }
+
+        const sleep = ms => new Promise(res => setTimeout(res, ms));
+
+        // --- 3. GESTION DU PAD TACTILE ---
+        const pad = document.getElementById('pad-container');
+        const cursor = document.getElementById('cursor');
+        const debug = document.getElementById('debug');
+
+        function updatePad(e) {
+            if (isPlaying) return;
+            const rect = pad.getBoundingClientRect();
+            let x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+            let y = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+
+            cursor.style.left = x + 'px';
+            cursor.style.top = y + 'px';
+
+            const speed = x / rect.width;
+            const depth = 1 - (y / rect.height);
+            setValues(speed, depth);
+
+            if (isRecording) {
+                recordedPattern.push({
+                    time: Date.now() - recordStartTime,
+                    speed: speed,
+                    depth: depth
+                });
+            }
+        }
+
+        function setValues(speed, depth) {
+            currentSpeed = speed;
+            currentDepth = depth;
+            debug.innerText = `Vitesse: ${Math.round(currentSpeed * 100)}% | Hauteur: ${Math.round(currentDepth * 100)}%`;
+        }
+
+        pad.addEventListener('pointerdown', (e) => {
+            if (isPlaying) return;
+            pad.classList.add('active');
+            pad.setPointerCapture(e.pointerId);
+            updatePad(e);
+        });
+
+        pad.addEventListener('pointermove', (e) => {
+            if (pad.classList.contains('active')) updatePad(e);
+        });
+
+        pad.addEventListener('pointerup', (e) => {
+            pad.classList.remove('active');
+            try { pad.releasePointerCapture(e.pointerId); } catch(err) {}
+            
+            // Sécurité homme-mort : arrêt et retour au centre
+            setValues(0, 0);
+            cursor.style.left = '50%';
+            cursor.style.top = '50%';
+
+            if (isRecording) {
+                recordedPattern.push({ time: Date.now() - recordStartTime, speed: 0, depth: 0 });
+            }
+        });
+
+        // --- 4. ENREGISTREMENT & LECTURE ---
+        const btnRecord = document.getElementById('btn-record');
+        const btnPlay = document.getElementById('btn-play');
+        const btnStop = document.getElementById('btn-stop');
+
+        let isRecording = false;
+        let isPlaying = false;
+        let recordStartTime = 0;
+        let recordedPattern = [];
+        let playTimeouts = [];
+
+        btnRecord.addEventListener('click', () => {
+            if (isPlaying) stopPlayback();
+
+            if (!isRecording) {
+                isRecording = true;
+                recordedPattern = [];
+                recordStartTime = Date.now();
+                btnRecord.classList.add('recording');
+                btnRecord.innerText = "ARRÊTER REC";
+                btnPlay.disabled = true;
+                recordedPattern.push({ time: 0, speed: 0, depth: 0 });
+            } else {
+                isRecording = false;
+                btnRecord.classList.remove('recording');
+                btnRecord.innerText = "ENREGISTRER (REC)";
+                if (recordedPattern.length > 1) btnPlay.disabled = false;
+            }
+        });
+
+        btnPlay.addEventListener('click', () => {
+            if (isRecording || recordedPattern.length === 0) return;
+
+            isPlaying = true;
+            btnPlay.classList.add('playing');
+            btnPlay.innerText = "LECTURE EN COURS...";
+
+            const rect = pad.getBoundingClientRect();
+            recordedPattern.forEach(pt => {
+                const to = setTimeout(() => {
+                    setValues(pt.speed, pt.depth);
+                    cursor.style.left = (pt.speed * rect.width) + 'px';
+                    cursor.style.top = ((1 - pt.depth) * rect.height) + 'px';
+                }, pt.time);
+                playTimeouts.push(to);
+            });
+
+            const lastTime = recordedPattern[recordedPattern.length - 1].time;
+            setTimeout(stopPlayback, lastTime + 100);
+        });
+
+        function stopPlayback() {
+            playTimeouts.forEach(clearTimeout);
+            playTimeouts = [];
+            isPlaying = false;
+            btnPlay.classList.remove('playing');
+            btnPlay.innerText = "LECTURE (PLAY)";
+            setValues(0, 0);
+            cursor.style.left = '50%';
+            cursor.style.top = '50%';
+        }
+
+        btnStop.addEventListener('click', () => {
+            if (isRecording) btnRecord.click();
+            if (isPlaying) stopPlayback();
+            setValues(0, 0);
+            sendKeonCommand("0,500;\n"); // Retour immédiat à la base
+        });
+    </script>
+</body>
+</html>
